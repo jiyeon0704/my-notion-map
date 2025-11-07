@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <title>노션 임베드용 핀 지도 (Leaflet + Firestore)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+
+  
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  
+<script type="module">
+    // Firebase imports
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+    import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+    import { getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, serverTimestamp, query } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+    import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+    /********** 1. 배경 이미지 URL **********/
+    const MAP_IMAGE_URL = "https://jiyeon0704.github.io/info_map/mapsarboretum.png";
+
+    /********** 2. 지도 옵션 **********/
+    const MIN_ZOOM = -5;
+    const MAX_ZOOM = 5;
+
+    /********** 3. Firebase 설정 (✅ 중요! 설정 완료) **********/
+    // 1. Firebase 콘솔에서 '웹 앱'의 설정 객체를 복사해 붙여넣으세요.
+    // (이 파일은 외부에 호스팅되므로, Canvas 변수 대신 실제 값을 넣어야 합니다.)
+    const firebaseConfig = {
+      apiKey: "AIzaSyB1r9RKhbbgXMvUFh3s69f1Lt5xIYr8t6U",
+      authDomain: "infomap-52f57.firebaseapp.com",
+      projectId: "infomap-52f57",
+      storageBucket: "infomap-52f57.firebasestorage.app",
+      messagingSenderId: "1039788996752",
+      appId: "1:1039788996752:web:1ebca93b29d79033638015",
+      measurementId: "G-WSB5TL789R"
+    };
+    
+    // 2. 이 지도의 핀을 저장할 Firestore 컬렉션 이름입니다.
+    // (데이터는 이 컬렉션에 저장됩니다.)
+    const COLLECTION_PATH = 'infomap_pins'; // (이름 변경 가능)
+
+    /********** 4. 전역 변수 **********/
+    let map;
+    const markerMap = new Map(); // id -> { marker, el, data }
+    let selectedId = null;
+
+    // 이미지 크기 자동 인식
+    function getImageSize(url){
+      return new Promise((res, rej) => {
+        const img = new Image();
+        img.onload = () => res({ w: img.naturalWidth, h: img.naturalHeight });
+        img.onerror = () => rej(new Error("이미지를 불러오지 못했습니다."));
+        img.src = url + (url.includes("?") ? "&" : "?") + "v=" + Date.now();
+      });
+    }
+
+    // 커스텀 마커 아이콘 생성
+    function createMarkerIcon(titleText) {
+      const root = document.createElement('div');
+      root.className = 'marker-root';
+      const dot = document.createElement('div');
+      dot.className = 'marker-dot';
+      const label = document.createElement('div');
+      label.className = 'marker-label';
+      label.textContent = titleText || '(제목없음)';
+      root.appendChild(label);
+      root.appendChild(dot);
+      return L.divIcon({
+        html: root.outerHTML,
+        className: '',
+        iconSize: [22, 22],
+        iconAnchor: [11, 11]
+      });
+    }
+
+    // 핀 선택 (포커스 기능)
+    function selectMarker(id) {
+      if (selectedId && markerMap.has(selectedId)) {
+        const prevRec = markerMap.get(selectedId);
+        if (prevRec.el) prevRec.el.classList.remove('marker-selected');
+        const liPrev = document.querySelector(`#pinItems li[data-id="${selectedId}"]`);
+        if (liPrev) liPrev.classList.remove('active');
+      }
+      
+      selectedId = id;
+      const titleInput = document.getElementById('title');
+      
+      if (markerMap.has(id)) {
+        const rec = markerMap.get(id);
+        if(rec.el) rec.el.classList.add('marker-selected');
+        const li = document.querySelector(`#pinItems li[data-id="${id}"]`);
+        if (li) li.classList.add('active');
+        
+        titleInput.value = rec.data.title || '';
+        titleInput.focus();
+      } else {
+        titleInput.value = '';
+      }
+    }
+
+    // 목록 새로고침
+    function refreshList() {
+      const listEl = document.getElementById('pinItems');
+      if (!listEl) return;
+      listEl.innerHTML = '';
+      
+      const arr = Array.from(markerMap.entries())
+        .map(([id, rec]) => ({ id, ...rec }))
+        .sort((a, b) => (a.data.title || '').localeCompare(b.data.title || ''));
+        
+      for (const item of arr) {
+        const li = document.createElement('li');
+        li.dataset.id = item.id;
+        li.className = (item.id === selectedId) ? 'active' : '';
+        
+        const titleBtn = document.createElement('span');
+        titleBtn.className = 'title';
+        titleBtn.textContent = item.data.title || '(제목없음)';
+        titleBtn.addEventListener('click', () => {
+          selectMarker(item.id);
+          map.flyTo([item.data.lat, item.data.lng], map.getZoom(), { duration: 0.7 });
+        });
+        
+        const coords = document.createElement('span');
+        coords.className = 'coords';
+        coords.textContent = `y: ${Number(item.data.lat).toFixed(2)}, x: ${Number(item.data.lng).toFixed(2)}`;
+        
+        li.appendChild(titleBtn);
+        li.appendChild(coords);
+        listEl.appendChild(li);
+      }
+    }
+
+    // 마커 추가
+    function addMarkerFromDoc(id, data, db) {
+      if (markerMap.has(id)) return;
+      const icon = createMarkerIcon(data.title);
+      const marker = L.marker([data.lat, data.lng], { icon: icon, draggable: true }).addTo(map);
+      const rootEl = marker.getElement();
+      rootEl.dataset.markerId = id;
+      
+      marker.on('click', (e) => {
+        L.DomEvent.stopPropagation(e);
+        selectMarker(id);
+      });
+      marker.on('contextmenu', async (e) => {
+        L.DomEvent.preventDefault(e);
+        // [수정] Firestore 보안 규칙을 고려하여, 익명 사용자도 삭제할 수 있도록 
+        // 확인창 없이 바로 삭제합니다.
+        await deleteDoc(doc(db, COLLECTION_PATH, id));
+      });
+      marker.on('dragend', async () => {
+        const p = marker.getLatLng();
+        await updateDoc(doc(db, COLLECTION_PATH, id), { lat: p.lat, lng: p.lng, updatedAt: serverTimestamp() });
+      });
+      markerMap.set(id, { marker, el: rootEl, data });
+    }
+
+    // 마커 업데이트
+    function updateMarkerFromDoc(id, data) {
+      const rec = markerMap.get(id);
+      if (!rec) { addMarkerFromDoc(id, data); return; }
+      
+      rec.data = data;
+      rec.marker.setLatLng([data.lat, data.lng]);
+      const newIcon = createMarkerIcon(data.title);
+      rec.marker.setIcon(newIcon);
+      rec.el = rec.marker.getElement();
+      rec.el.dataset.markerId = id;
+      
+      if (selectedId === id) {
+        document.getElementById('title').value = data.title || '';
+        rec.el.classList.add('marker-selected');
+      }
+    }
+
+    // 마커 삭제
+    function removeMarker(id) {
+      const rec = markerMap.get(id);
+      if (!rec) return;
+      rec.marker.remove();
+      markerMap.delete(id);
+      if (selectedId === id) {
+        selectedId = null;
+        document.getElementById('title').value = '';
+      }
+    }
+
+    // 앱 초기화 (Firestore 연동)
+    function initFirestoreApp(db) {
+      // 1. 맵 클릭
+      map.on('click', async (e) => {
+        if (e.originalEvent.target.closest('.leaflet-marker-icon')) return;
+        await addDoc(collection(db, COLLECTION_PATH), {
+          title: '',
+          lat: e.latlng.lat,
+          lng: e.latlng.lng,
+          updatedAt: serverTimestamp()
+        });
+      });
+
+      // 2. 'Enter'로 제목 저장
+      const titleInput = document.getElementById('title');
+      titleInput.addEventListener('keydown', async (e) => {
+        if (e.key === 'Enter') {
+          if (!selectedId) return;
+          const title = titleInput.value.trim();
+          await updateDoc(doc(db, COLLECTION_PATH, selectedId), { title, updatedAt: serverTimestamp() });
+          titleInput.blur();
+          const oldColor = titleInput.style.borderColor;
+          titleInput.style.borderColor = "#22c55e";
+          setTimeout(() => { titleInput.style.borderColor = oldColor; }, 1000);
+        }
+      });
+      
+      // 3. 실시간 구독
+      const q = query(collection(db, COLLECTION_PATH));
+      onSnapshot(q, (snap) => {
+        snap.docChanges().forEach((ch) => {
+          const id = ch.doc.id;
+          const d  = ch.doc.data();
+          if (ch.type === 'added') {
+            addMarkerFromDoc(id, d, db);
+            selectMarker(id); // 추가되면 자동 선택
+          }
+          else if (ch.type === 'modified') updateMarkerFromDoc(id, d);
+          else if (ch.type === 'removed')  removeMarker(id);
+        });
+        refreshList();
+      });
+    }
+
+    // 메인 로직 실행
+    (async function start(){
+      try {
+        const { w: IMG_W, h: IMG_H } = await getImageSize(MAP_IMAGE_URL);
+        map = L.map('map', {
+          crs: L.CRS.Simple, minZoom: MIN_ZOOM, maxZoom: MAX_ZOOM,
+          zoomSnap: 0.1, zoomDelta: 0.1, zoomControl: true,
+          scrollWheelZoom: true, doubleClickZoom: true, boxZoom: true,
+          dragging: true, touchZoom: true, keyboard: true
+        });
+        const bounds = [[0, 0], [IMG_H, IMG_W]];
+        L.imageOverlay(MAP_IMAGE_URL, bounds, { interactive: false }).addTo(map);
+        map.fitBounds(bounds);
+        map.setMaxBounds(bounds);
+        map.options.maxBoundsViscosity = 0.9;
+
+        // 5. Firebase 인증 (외부 호스팅용)
+        if (!firebaseConfig.apiKey || firebaseConfig.projectId === "YOUR_PROJECT_ID") {
+            console.error("Firebase 설정이 없습니다.");
+            document.getElementById('panel').innerHTML = "<h2>오류</h2><p>Firebase 설정이 누락되어 핀 기능을 사용할 수 없습니다. (HTML 파일 수정 필요)</p>";
+            return;
+        }
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        setLogLevel('debug'); 
+
+        // Canvas 환경이 아니므로 항상 익명 로그인 사용
+        await signInAnonymously(auth);
+
+        onAuthStateChanged(auth, (user) => {
+          if (user) {
+            console.log("Firebase 인증 성공 (익명):", user.uid);
+            initFirestoreApp(db); // 인증 성공 후 핀 기능 초기화
+          } else {
+            console.log("Firebase 인증 실패");
+          }
+        });
+
+      } catch (e) {
+        const errorDiv = `
+          <div style="padding: 20px; text-align: center; font-family: sans-serif; color: #b91c1c; background: #fef2f2; height: 100%;">
+            <h2>지도 로드 오류</h2>
+            <p>배경 이미지를 불러오지 못했습니다. URL을 확인하세요.</p>
+            <pre style="text-align: left; background: #fff; padding: 10px; border-radius: 6px; border: 1px solid #fecaca; overflow: auto;">${e.message}</pre>
+          </div>`;
+        document.getElementById('map').innerHTML = errorDiv;
+        console.error(e);
+      }
+    })();
+  
+  </script>
+
+  <style>
+    /* ... (스타일은 이전과 동일) ... */
+    html, body { height: 100%; margin: 0; }
+    #app { display: flex; height: 100%; }
+    #map { flex: 1; background: #ffffff !important; height: 100%; }
+    #panel {
+      width: 360px; background: #fff; padding: 12px 14px;
+      border-left: 1px solid #e5e7eb; box-shadow: -2px 0 6px rgba(0,0,0,.05);
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; font-size: 14px;
+      display:flex; flex-direction:column; gap:10px;
+      overflow-y: auto;
+      flex-shrink: 0;
+    }
+    #panel h2 { margin: 4px 0 0; font-size: 16px; }
+    .row { display:flex; flex-direction: column; gap:6px; }
+    .row label { font-weight: 600; }
+    .row input {
+      padding: 8px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;
+      box-sizing: border-box;
+      transition: border-color 0.2s ease-in-out;
+    }
+    .row input:focus {
+      border-color: #2563eb;
+      box-shadow: 0 0 0 1px #2563eb;
+      outline: none;
+    }
+    .hint { color:#6b7280; font-size:12px; }
+    .leaflet-marker-icon .marker-root { 
+      width: 22px; height: 22px; 
+      position: relative; cursor: pointer; 
+    }
+    .marker-dot {
+      width: 14px; height: 14px; border-radius: 50%;
+      background: #2563eb; border: 2px solid #ffffff; box-shadow: 0 0 0 1px #1f2937;
+      position: absolute; left: 50%; top: 50%; 
+      transform: translate(-50%, -50%); 
+    }
+    .marker-label {
+      position: absolute; top: -26px; left: 50%; transform: translateX(-50%);
+      background: rgba(255,255,255,0.9); border: 1px solid #e5e7eb; border-radius: 6px;
+      padding: 2px 6px; font-size: 12px; font-weight: 600; color: #111827;
+      white-space: nowrap; pointer-events: none;
+    }
+    .leaflet-marker-icon .marker-selected .marker-dot,
+    .leaflet-marker-icon:hover .marker-dot { 
+      background: #ef4444; 
+    }
+    .leaflet-marker-icon .marker-selected { z-index: 1000 !important; }
+    #pinList { border-top:1px solid #e5e7eb; padding-top:8px; }
+    #pinItems { list-style:none; padding:0; margin:0; max-height:240px; overflow:auto; }
+    #pinItems li {
+      display:flex; align-items:center; justify-content:space-between;
+      gap:8px; padding:6px 4px; border-bottom:1px dashed #eef2f7;
+    }
+    #pinItems li .title { cursor:pointer; }
+    #pinItems li .coords { color:#6b7280; font-size:12px; }
+    #pinItems li.active .title { font-weight:700; color:#ef4444; }
+  </style>
+</head>
+<body>
+
+<div id="app">
+  <div id="map" aria-label="수목원 이미지 지도"></div>
+  <div id="panel">
+    <h2>🌿 안내판 위치</h2> 
+    <div class="row">
+      <span class="hint">지도의 빈 곳을 클릭하면 새 핀이 생성됩니다. 핀을 클릭하면 선택됩니다. 핀을 드래그하여 옮길 수 있습니다.</span>
+      <label for="title">제목 (선택 후 'Enter'로 저장)</label>
+      <input id="title" placeholder="예: 소나무 안내판" />
+    </div>
+    <div id="pinList">
+      <h3 style="margin:0 0 6px 0; font-size:15px;">📍 핀 목록</h3>
+      <ul id="pinItems"></ul>
+    </div>
+    <div class="row"><span class="hint">팁: 목록의 제목을 클릭하면 해당 위치로 이동합니다. 핀을 우클릭하면 바로 삭제할 수 있습니다.</span></div>
+  </div>
+</div>
+
+</body>
+</html>
