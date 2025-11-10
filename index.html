@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
   <meta charset="utf-8" />
-  <title>노션 임베드용 핀 지도 (최종 개선판)</title>
+  <title>노션 임베드용 핀 지도 (왼쪽 패널)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 
   <!-- Leaflet -->
@@ -144,6 +144,13 @@
           };
 
           const deleteBtnLi = li.querySelector('.delete-pin-btn');
+          // 모바일 터치 이벤트 추가 (우클릭 대체)
+          deleteBtnLi.ontouchstart = async (e) => {
+               e.stopPropagation();
+               e.preventDefault(); // 더블탭 확대 방지
+               if (!isEditMode) { alert("편집 모드를 켜주세요."); return; }
+               await deleteDoc(doc(db, COLLECTION_PATH, id));
+          };
           deleteBtnLi.onclick = async (e) => {
               e.stopPropagation();
               if (!isEditMode) { alert("편집 모드를 켜주세요."); return; }
@@ -152,10 +159,10 @@
           listEl.appendChild(li);
         });
         
-        refreshStats(); // 통계 갱신
+        refreshStats(); 
     }
     
-    // [신규] 통계 갱신
+    // 통계 갱신
     function refreshStats() {
         const totalCountEl = document.getElementById('totalPinCount');
         const statsListEl = document.getElementById('statsList');
@@ -171,7 +178,7 @@
         
         statsListEl.innerHTML = '';
         Object.entries(typeCounts)
-            .sort((a, b) => b[1] - a[1]) // 개수 많은 순 정렬
+            .sort((a, b) => b[1] - a[1]) 
             .forEach(([type, count]) => {
                 const tr = document.createElement('tr');
                 tr.innerHTML = `<td>${type}</td><td style="text-align: right; font-weight: bold;">${count}개</td>`;
@@ -282,7 +289,7 @@
         });
     }
 
-    // 패널 리사이저 기능 초기화
+    // [수정] 왼쪽 패널용 리사이저 로직
     function initResizer() {
       const resizer = document.getElementById('resizer');
       const panel = document.getElementById('panel');
@@ -296,7 +303,8 @@
 
       document.addEventListener('mousemove', (e) => {
         if (!isResizing) return;
-        const newWidth = document.body.clientWidth - e.clientX;
+        // 왼쪽 패널이므로 마우스 X 좌표가 곧 패널의 너비가 됨
+        const newWidth = e.clientX; 
         if (newWidth > 250 && newWidth < 600) {
           panel.style.width = `${newWidth}px`;
         }
@@ -321,7 +329,7 @@
           zoomControl: false, maxBoundsViscosity: 0.9
         });
         
-        L.control.zoom({ position: 'topleft' }).addTo(map); 
+        L.control.zoom({ position: 'topright' }).addTo(map); // 줌 컨트롤 오른쪽으로 이동
 
         L.Control.ResetView = L.Control.extend({
           onAdd: function(map) {
@@ -335,7 +343,7 @@
           },
           onRemove: function(map) {}
         });
-        new L.Control.ResetView({ position: 'topleft' }).addTo(map);
+        new L.Control.ResetView({ position: 'topright' }).addTo(map); // 전체보기 버튼도 오른쪽으로 이동
 
         initialBounds = [[0,0], [h,w]]; 
         L.imageOverlay(MAP_IMAGE_URL, initialBounds).addTo(map);
@@ -412,7 +420,7 @@
   <style>
     /* --- 기본 레이아웃 --- */
     html, body, #app { height: 100%; margin: 0; font-family: sans-serif; overflow: hidden; }
-    #app { display: flex; flex-direction: row; }
+    #app { display: flex; flex-direction: row; } /* [수정] 기본은 row, 패널을 먼저 배치 */
     #map { flex: 1; background: #fff; }
     
     #resizer { width: 5px; background: #ddd; cursor: col-resize; z-index: 10; transition: background 0.2s; }
@@ -422,6 +430,7 @@
       width: 320px; display: flex; flex-direction: column;
       background: #f9fafb; z-index: 2;
       min-width: 250px; max-width: 600px;
+      border-right: 1px solid #e5e7eb; /* [수정] 오른쪽 테두리 추가 */
     }
     .panel-header {
       padding: 15px; background: #fff; border-bottom: 1px solid #eee;
@@ -474,7 +483,6 @@
     #app.edit-mode #pinItems li:hover .actions { opacity: 1; }
     .delete-pin-btn { background: none; border: none; cursor: pointer; font-size: 14px; }
 
-    /* 통계 섹션 스타일 */
     #statsTable { width: 100%; border-collapse: collapse; font-size: 13px; }
     #statsTable th, #statsTable td { padding: 6px 8px; border-bottom: 1px solid #eee; text-align: left; }
     #statsTable th { background: #f9fafb; font-weight: 600; color: #555; }
@@ -507,9 +515,13 @@
 
     @media (max-width: 768px) {
       #app { flex-direction: column; }
-      #map { flex: 1; }
+      #map { flex: 1; order: 1; /* [수정] 모바일: 지도 먼저 */ }
       #resizer { display: none; } 
-      #panel { width: 100%; height: auto; max-height: 50vh; border-left: none; border-top: 1px solid #ddd; min-width: auto; max-width: none; }
+      #panel { 
+          width: 100%; height: auto; max-height: 50vh; 
+          border-right: none; border-top: 1px solid #ddd; /* [수정] 테두리 위치 변경 */
+          min-width: auto; max-width: none; order: 2; /* [수정] 모바일: 패널 나중 */
+      }
       .panel-content { padding: 10px; gap: 15px; }
       #app.edit-mode .actions { opacity: 1; }
     }
@@ -518,8 +530,7 @@
 <body>
 
 <div id="app">
-  <div id="map"></div>
-  <div id="resizer"></div>
+  <!-- [수정] 패널을 먼저 배치 (PC에서는 왼쪽, 모바일에서는 CSS order로 조정) -->
   <div id="panel">
     <div class="panel-header">
       <h2>🌿 안내판 위치</h2>
@@ -533,7 +544,6 @@
     </div>
 
     <div class="panel-content">
-      <!-- 섹션 1: 종류 관리 -->
       <div class="section">
         <h3>📌 안내판 종류 관리</h3>
         <div class="type-input-group">
@@ -543,7 +553,6 @@
         <ul id="typeManageList"></ul>
       </div>
 
-      <!-- 섹션 2: 핀 편집 -->
       <div class="section">
         <h3>📝 선택한 핀 편집</h3>
         <div class="edit-form">
@@ -553,13 +562,11 @@
         </div>
       </div>
 
-      <!-- 섹션 3: 핀 목록 -->
       <div class="section pin-list-area">
         <h3>📍 등록된 핀 목록</h3>
         <ul id="pinItems"></ul>
       </div>
 
-      <!-- 섹션 4: 통계 (신규) -->
       <div class="section">
         <h3>📊 통계 (Sorting)</h3>
         <div style="background: #fff; padding: 10px; border: 1px solid #eee; border-radius: 4px;">
@@ -571,15 +578,15 @@
                 <thead>
                     <tr><th>종류</th><th style="text-align: right;">개수</th></tr>
                 </thead>
-                <tbody id="statsList">
-                    <!-- JS로 렌더링 -->
-                </tbody>
+                <tbody id="statsList"></tbody>
             </table>
         </div>
       </div>
 
     </div>
   </div>
+  <div id="resizer"></div>
+  <div id="map"></div>
 </div>
 
 </body>
