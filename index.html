@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8" />
-<title>노션 임베드용 핀 지도 (깜빡임 기능)</title>
+<title>노션 임베드용 핀 지도 (모바일 목록 수정)</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <!-- Leaflet -->
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -56,28 +56,39 @@ function createMarkerIcon(titleText) {
   return L.divIcon({ html: root.outerHTML, className: '', iconSize: [22, 22], iconAnchor: [11, 11] });
 }
 
-// [신규] 모든 마커 깜빡임 중지
-function stopAllBlinks() {
-    // document.querySelectorAll('.marker-blink').forEach(el => {
-    //     el.classList.remove('marker-blink');
-    // });
-    
-    // [수정] markerMap을 순회하며 직접 클래스 제거 (더 확실한 방식)
+// [수정] 모든 마커 스타일 초기화 (깜빡임, 흐림 제거)
+function resetAllMarkerStyles() {
     markerMap.forEach(rec => {
         if (rec.el) {
-            rec.el.classList.remove('marker-blink');
+            rec.el.classList.remove('marker-blink', 'marker-faded');
         }
     });
 }
 
-// [신규] 특정 마커 그룹 깜빡임
-function blinkMarkers(markers) {
-    // stopAllBlinks(); // [수정] 중복 호출 제거 (header.onclick에서 이미 호출)
-    markers.forEach(marker => {
-        const el = marker.getElement();
-        if (el) {
-            el.classList.add('marker-blink');
-            // [수정] 2.5초 후 자동 제거하는 setTimeout 제거
+// [수정] 특정 마커 그룹 깜빡임 + 나머지 흐리게
+function highlightMarkers(markersToBlink) {
+    resetAllMarkerStyles(); // 1. 모든 효과 초기화
+    
+    // 2. 깜빡일 마커 ID 셋 생성 (빠른 비교용)
+    const blinkIds = new Set(markersToBlink.map(m => m.options.icon.options.html)); // HACK: ID를 icon html에서 가져옴 (임시)
+    // HACK: 더 나은 방법은 marker 생성 시 id를 저장하는 것. 여기서는 markerMap을 순회하며 ID를 찾음.
+    const blinkMarkerIds = new Set();
+    markersToBlink.forEach(marker => {
+        for (const [id, rec] of markerMap.entries()) {
+            if (rec.marker === marker) {
+                blinkMarkerIds.add(id);
+                break;
+            }
+        }
+    });
+
+    markerMap.forEach((rec, id) => {
+        if (blinkMarkerIds.has(id)) {
+            // 3. 선택된 핀 깜빡임
+            if (rec.el) rec.el.classList.add('marker-blink');
+        } else {
+            // 4. 나머지 핀 흐리게
+            if (rec.el) rec.el.classList.add('marker-faded');
         }
     });
 }
@@ -112,7 +123,9 @@ function addMarkerFromDoc(id, data) {
   const icon = createMarkerIcon(data.title);
   const marker = L.marker([data.lat, data.lng], { icon, draggable: isEditMode }).addTo(map);
   const el = marker.getElement();
-  marker.on('click', (e) => { L.DomEvent.stopPropagation(e); stopAllBlinks(); selectMarker(id); });
+  el.dataset.markerId = id; // [신규] ID 저장
+  
+  marker.on('click', (e) => { L.DomEvent.stopPropagation(e); resetAllMarkerStyles(); selectMarker(id); });
   marker.on('dragend', async () => { 
     const p = marker.getLatLng();
     await updateDoc(doc(db, COLLECTION_PATH, id), { 
@@ -131,7 +144,8 @@ function updateMarkerFromDoc(id, data) {
   rec.data = data;
   rec.marker.setLatLng([data.lat, data.lng]);
   rec.marker.setIcon(createMarkerIcon(data.title));
-  rec.el = rec.marker.getElement();
+  rec.el = rec.marker.getElement(); // 아이콘 변경 시 DOM 요소가 교체될 수 있음
+  rec.el.dataset.markerId = id; // ID 다시 저장
   if (selectedId === id) selectMarker(id);
 }
 
@@ -190,12 +204,12 @@ function refreshList() {
               </div>
           `;
           
-          // [수정] 개별 핀 클릭: 깜빡임 중지 + 줌인
+          // 개별 핀 클릭: 깜빡임 중지 + 줌인
           childLi.onclick = (e) => {
               if (!e.target.closest('.actions')) {
-                  stopAllBlinks(); // [신규] 깜빡임 중지
+                  resetAllMarkerStyles(); 
                   selectMarker(pin.id);
-                  map.flyTo([pin.data.lat, pin.data.lng], 3.5, { duration: 1.5 }); // [수정] 줌 레벨을 3.5 (MAX_ZOOM의 70%)로 변경
+                  map.flyTo([pin.data.lat, pin.data.lng], 3.5, { duration: 1.5 }); // 70% 줌 레벨
               }
           };
           const deleteBtnLi = childLi.querySelector('.delete-pin-btn');
@@ -207,27 +221,23 @@ function refreshList() {
           childrenUl.appendChild(childLi);
       });
       
-      // [수정] 그룹 헤더 클릭: 목록 토글 + 줌 아웃 + 깜빡임
+      // 그룹 헤더 클릭: 목록 토글 + 줌 아웃 + 깜빡임
       header.onclick = () => {
-          // 1. 목록 토글
           childrenUl.classList.toggle('hidden');
           
-          // 2. 핀 마커 찾기
           const markersInGroup = pins
               .map(pin => markerMap.get(pin.id)?.marker)
-              .filter(Boolean); // undefined 제거
+              .filter(Boolean); 
           
           if (markersInGroup.length > 0) {
-              stopAllBlinks(); // 다른 그룹 깜빡임 중지
-              selectMarker(null); // [신규] 기존 개별 핀 선택 해제
+              resetAllMarkerStyles(); 
+              selectMarker(null); // 기존 개별 핀 선택 해제
               
-              // 3. 줌 아웃 - 핀 개수와 상관없이 항상 전체 지도로 줌 아웃
               if (initialBounds) {
-                  map.fitBounds(initialBounds, { animate: true, duration: 1 });
+                   map.fitBounds(initialBounds, { animate: true }); // 항상 전체 맵 뷰
               }
               
-              // 4. 깜빡임
-              blinkMarkers(markersInGroup);
+              highlightMarkers(markersInGroup); // 나머지 흐리게 + 선택 핀 깜빡이게
           }
       };
       
@@ -422,7 +432,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     map.on('click', async (e) => {
-      stopAllBlinks(); // [신규] 빈 맵 클릭 시 깜빡임 중지
+      resetAllMarkerStyles(); 
       if (!isEditMode) { selectMarker(null); return; } 
       if (e.originalEvent.target.closest('.leaflet-marker-icon')) return;
 
@@ -506,6 +516,8 @@ input:checked + .slider:before { transform: translateX(16px); }
 .panel-content { padding: 15px; flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 20px; }
 .section.pin-list-area {
     flex: 1;
+    display: flex; /* [수정] flex-direction column */
+    flex-direction: column;
     min-height: 100px;
 }
 .section { display: flex; flex-direction: column; gap: 10px; }
@@ -547,8 +559,9 @@ input:checked + .slider:before { transform: translateX(16px); }
     background: #fff; 
     border: 1px solid #eee; 
     border-radius: 4px; 
-    flex: 1;
-    overflow-y: auto;
+    flex: 1; /* [수정] 목록이 남은 공간 차지 */
+    overflow-y: auto; /* [수정] 목록 스크롤 */
+    max-height: none; /* [수정] 모바일 수정을 위해 max-height 제거 */
 }
 .pin-group-header {
   display: flex; justify-content: space-between; align-items: center;
@@ -578,7 +591,10 @@ input, select, button { padding: 6px 8px; border: 1px solid #ddd; border-radius:
 button { background: #f3f4f6; cursor: pointer; }
 button:hover { background: #e5e7eb; }
 
-.marker-root { position: relative; width: 22px; height: 22px; }
+.marker-root { 
+    position: relative; width: 22px; height: 22px; 
+    transition: opacity 0.3s ease-in-out; /* [신규] 흐림 효과 트랜지션 */
+}
 .marker-dot {
   position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
   width: 14px; height: 14px; background: #2563eb; border: 2px solid #fff; border-radius: 50%;
@@ -593,15 +609,23 @@ button:hover { background: #e5e7eb; }
 .marker-selected .marker-dot { background: #ef4444; transform: translate(-50%, -50%) scale(1.2); }
 .marker-selected { z-index: 999 !important; }
 
-/* [신규] 마커 깜빡임 애니메이션 */
+/* [신규] 마커 깜빡임 애니메이션 (무한 반복) */
 @keyframes marker-blink-animation {
   0%, 100% { opacity: 1; transform: translate(-50%, -50%) scale(1.1); }
   50% { opacity: 0.3; transform: translate(-50%, -50%) scale(0.9); }
 }
 .marker-blink .marker-dot {
-  /* [수정] 5회 -> 무제한 */
-  animation: marker-blink-animation 0.5s infinite;
+  animation: marker-blink-animation 0.5s infinite; /* [수정] 무한 반복 */
   background-color: #ef4444 !important; /* 깜빡일 때 빨간색 */
+}
+
+/* [신규] 마커 흐리게 */
+.marker-faded {
+    opacity: 0.3;
+    z-index: 1 !important;
+}
+.marker-faded:hover {
+    opacity: 0.8; /* 흐려진 핀에 마우스 올려도 살짝 보임 */
 }
 
 /* [신규] 전체 지도 보기 버튼 */
@@ -629,6 +653,16 @@ button:hover { background: #e5e7eb; }
   }
   .panel-content { padding: 10px; gap: 15px; }
   #app.edit-mode .actions { opacity: 1; }
+  
+  /* [수정] 모바일에서 핀 목록이 스크롤되도록 */
+  .section.pin-list-area {
+      flex-basis: 150px; /* 최소 150px 높이 확보 */
+      flex-grow: 1;
+  }
+  #pinItems {
+      max-height: 150px; /* [수정] 모바일에서 목록 높이 제한 */
+      flex: none; /* flex: 1 제거 */
+  }
 }
 </style>
 </head>
