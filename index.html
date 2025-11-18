@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8" />
-<title>노션 임베드용 핀 지도 (최종 안정화)</title>
+<title>노션 임베드용 핀 지도 (깜빡임 기능)</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <!-- Leaflet -->
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -16,7 +16,7 @@ import { getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot
 
 /********** 1. 설정 **********/
 const MAP_IMAGE_URL = "https://jiyeon0704.github.io/info_map/mapsarboretum.png";
-const MIN_ZOOM = -5, MAX_ZOOM = 5; // [수정] 단순 이미지 줌 레벨
+const MIN_ZOOM = -5, MAX_ZOOM = 5; 
 const firebaseConfig = {
   apiKey: "AIzaSyB1r9RKhbbgXMvUFh3s69f1Lt5xIYr8t6U",
   authDomain: "infomap-52f57.firebaseapp.com",
@@ -36,7 +36,7 @@ let map, db;
 const markerMap = new Map();
 let selectedId = null;
 let isEditMode = false;
-let initialBounds = null; // [신규] 전체 지도 영역
+let initialBounds = null; 
 
 // 이미지 크기 가져오기
 function getImageSize(url){
@@ -54,6 +54,32 @@ function createMarkerIcon(titleText) {
   root.className = 'marker-root';
   root.innerHTML = `<div class="marker-label">${titleText || '(미선택)'}</div><div class="marker-dot"></div>`;
   return L.divIcon({ html: root.outerHTML, className: '', iconSize: [22, 22], iconAnchor: [11, 11] });
+}
+
+// [신규] 모든 마커 깜빡임 중지
+function stopAllBlinks() {
+    // document.querySelectorAll('.marker-blink').forEach(el => {
+    //     el.classList.remove('marker-blink');
+    // });
+    
+    // [수정] markerMap을 순회하며 직접 클래스 제거 (더 확실한 방식)
+    markerMap.forEach(rec => {
+        if (rec.el) {
+            rec.el.classList.remove('marker-blink');
+        }
+    });
+}
+
+// [신규] 특정 마커 그룹 깜빡임
+function blinkMarkers(markers) {
+    // stopAllBlinks(); // [수정] 중복 호출 제거 (header.onclick에서 이미 호출)
+    markers.forEach(marker => {
+        const el = marker.getElement();
+        if (el) {
+            el.classList.add('marker-blink');
+            // [수정] 2.5초 후 자동 제거하는 setTimeout 제거
+        }
+    });
 }
 
 // 핀 선택/해제
@@ -83,16 +109,15 @@ function selectMarker(id) {
 // 마커 추가
 function addMarkerFromDoc(id, data) {
   if (markerMap.has(id)) return;
-  // [수정] (Y, X) 픽셀 좌표(data.lat, data.lng)를 그대로 사용
   const icon = createMarkerIcon(data.title);
   const marker = L.marker([data.lat, data.lng], { icon, draggable: isEditMode }).addTo(map);
   const el = marker.getElement();
-  marker.on('click', (e) => { L.DomEvent.stopPropagation(e); selectMarker(id); });
+  marker.on('click', (e) => { L.DomEvent.stopPropagation(e); stopAllBlinks(); selectMarker(id); });
   marker.on('dragend', async () => { 
     const p = marker.getLatLng();
     await updateDoc(doc(db, COLLECTION_PATH, id), { 
-        lat: p.lat, // 이미지 Y좌표
-        lng: p.lng, // 이미지 X좌표
+        lat: p.lat, 
+        lng: p.lng, 
         updatedAt: serverTimestamp() 
     });
   });
@@ -164,11 +189,13 @@ function refreshList() {
                   <button class="delete-pin-btn" title="삭제">🗑️</button>
               </div>
           `;
+          
+          // [수정] 개별 핀 클릭: 깜빡임 중지 + 줌인
           childLi.onclick = (e) => {
               if (!e.target.closest('.actions')) {
+                  stopAllBlinks(); // [신규] 깜빡임 중지
                   selectMarker(pin.id);
-                  // [수정] 핀의 Y,X 좌표로 이동 (GPS 아님)
-                  map.flyTo([pin.data.lat, pin.data.lng], MAX_ZOOM, { duration: 1.5 }); 
+                  map.flyTo([pin.data.lat, pin.data.lng], 3.5, { duration: 1.5 }); // [수정] 줌 레벨을 3.5 (MAX_ZOOM의 70%)로 변경
               }
           };
           const deleteBtnLi = childLi.querySelector('.delete-pin-btn');
@@ -179,9 +206,31 @@ function refreshList() {
           };
           childrenUl.appendChild(childLi);
       });
+      
+      // [수정] 그룹 헤더 클릭: 목록 토글 + 줌 아웃 + 깜빡임
       header.onclick = () => {
+          // 1. 목록 토글
           childrenUl.classList.toggle('hidden');
+          
+          // 2. 핀 마커 찾기
+          const markersInGroup = pins
+              .map(pin => markerMap.get(pin.id)?.marker)
+              .filter(Boolean); // undefined 제거
+          
+          if (markersInGroup.length > 0) {
+              stopAllBlinks(); // 다른 그룹 깜빡임 중지
+              selectMarker(null); // [신규] 기존 개별 핀 선택 해제
+              
+              // 3. 줌 아웃 - 핀 개수와 상관없이 항상 전체 지도로 줌 아웃
+              if (initialBounds) {
+                  map.fitBounds(initialBounds, { animate: true, duration: 1 });
+              }
+              
+              // 4. 깜빡임
+              blinkMarkers(markersInGroup);
+          }
       };
+      
       groupLi.appendChild(header);
       groupLi.appendChild(childrenUl);
       listEl.appendChild(groupLi);
@@ -315,21 +364,18 @@ function initResizer() {
 }
 
 /********** 3. 초기화 및 이벤트 리스너 **********/
-// [수정] 플러그인 로드 대기 제거, DOMContentLoaded로 변경
 document.addEventListener('DOMContentLoaded', async () => {
   try {
     const { w, h } = await getImageSize(MAP_IMAGE_URL);
     
-    // [수정] CRS.Simple로 지도 초기화
     map = L.map('map', {
-      crs: L.CRS.Simple, // [수정] 단순 이미지 좌표계
+      crs: L.CRS.Simple, 
       minZoom: MIN_ZOOM,
       maxZoom: MAX_ZOOM,
-      zoomControl: true, // 기본 줌 컨트롤
+      zoomControl: true, 
       maxBoundsViscosity: 0.9,
     });
     
-    // [신규] 전체 지도 보기 버튼
     L.Control.ResetView = L.Control.extend({
       onAdd: function(map) {
         const btn = L.DomUtil.create('button', 'reset-view-btn');
@@ -376,14 +422,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     map.on('click', async (e) => {
+      stopAllBlinks(); // [신규] 빈 맵 클릭 시 깜빡임 중지
       if (!isEditMode) { selectMarker(null); return; } 
       if (e.originalEvent.target.closest('.leaflet-marker-icon')) return;
 
-      // [수정] 클릭한 (Y, X) 픽셀 좌표를 바로 사용
       const docRef = await addDoc(collection(db, COLLECTION_PATH), {
         title: '', 
-        lat: e.latlng.lat, // 이미지 Y좌표
-        lng: e.latlng.lng, // 이미지 X좌표
+        lat: e.latlng.lat, 
+        lng: e.latlng.lng, 
         updatedAt: serverTimestamp()
       });
       selectMarker(docRef.id);
@@ -546,6 +592,17 @@ button:hover { background: #e5e7eb; }
 }
 .marker-selected .marker-dot { background: #ef4444; transform: translate(-50%, -50%) scale(1.2); }
 .marker-selected { z-index: 999 !important; }
+
+/* [신규] 마커 깜빡임 애니메이션 */
+@keyframes marker-blink-animation {
+  0%, 100% { opacity: 1; transform: translate(-50%, -50%) scale(1.1); }
+  50% { opacity: 0.3; transform: translate(-50%, -50%) scale(0.9); }
+}
+.marker-blink .marker-dot {
+  /* [수정] 5회 -> 무제한 */
+  animation: marker-blink-animation 0.5s infinite;
+  background-color: #ef4444 !important; /* 깜빡일 때 빨간색 */
+}
 
 /* [신규] 전체 지도 보기 버튼 */
 .reset-view-btn {
