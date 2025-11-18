@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8" />
-<title>노션 임베드용 핀 지도 (모바일 목록 수정)</title>
+<title>노션 임베드용 핀 지도 (스크롤 수정)</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <!-- Leaflet -->
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -56,7 +56,7 @@ function createMarkerIcon(titleText) {
   return L.divIcon({ html: root.outerHTML, className: '', iconSize: [22, 22], iconAnchor: [11, 11] });
 }
 
-// [수정] 모든 마커 스타일 초기화 (깜빡임, 흐림 제거)
+// 모든 마커 스타일 초기화 (깜빡임, 흐림 제거)
 function resetAllMarkerStyles() {
     markerMap.forEach(rec => {
         if (rec.el) {
@@ -65,13 +65,10 @@ function resetAllMarkerStyles() {
     });
 }
 
-// [수정] 특정 마커 그룹 깜빡임 + 나머지 흐리게
+// 특정 마커 그룹 깜빡임 + 나머지 흐리게
 function highlightMarkers(markersToBlink) {
-    resetAllMarkerStyles(); // 1. 모든 효과 초기화
+    resetAllMarkerStyles(); 
     
-    // 2. 깜빡일 마커 ID 셋 생성 (빠른 비교용)
-    const blinkIds = new Set(markersToBlink.map(m => m.options.icon.options.html)); // HACK: ID를 icon html에서 가져옴 (임시)
-    // HACK: 더 나은 방법은 marker 생성 시 id를 저장하는 것. 여기서는 markerMap을 순회하며 ID를 찾음.
     const blinkMarkerIds = new Set();
     markersToBlink.forEach(marker => {
         for (const [id, rec] of markerMap.entries()) {
@@ -84,10 +81,8 @@ function highlightMarkers(markersToBlink) {
 
     markerMap.forEach((rec, id) => {
         if (blinkMarkerIds.has(id)) {
-            // 3. 선택된 핀 깜빡임
             if (rec.el) rec.el.classList.add('marker-blink');
         } else {
-            // 4. 나머지 핀 흐리게
             if (rec.el) rec.el.classList.add('marker-faded');
         }
     });
@@ -123,7 +118,7 @@ function addMarkerFromDoc(id, data) {
   const icon = createMarkerIcon(data.title);
   const marker = L.marker([data.lat, data.lng], { icon, draggable: isEditMode }).addTo(map);
   const el = marker.getElement();
-  el.dataset.markerId = id; // [신규] ID 저장
+  el.dataset.markerId = id; 
   
   marker.on('click', (e) => { L.DomEvent.stopPropagation(e); resetAllMarkerStyles(); selectMarker(id); });
   marker.on('dragend', async () => { 
@@ -144,8 +139,8 @@ function updateMarkerFromDoc(id, data) {
   rec.data = data;
   rec.marker.setLatLng([data.lat, data.lng]);
   rec.marker.setIcon(createMarkerIcon(data.title));
-  rec.el = rec.marker.getElement(); // 아이콘 변경 시 DOM 요소가 교체될 수 있음
-  rec.el.dataset.markerId = id; // ID 다시 저장
+  rec.el = rec.marker.getElement(); 
+  rec.el.dataset.markerId = id; 
   if (selectedId === id) selectMarker(id);
 }
 
@@ -204,12 +199,11 @@ function refreshList() {
               </div>
           `;
           
-          // 개별 핀 클릭: 깜빡임 중지 + 줌인
           childLi.onclick = (e) => {
               if (!e.target.closest('.actions')) {
                   resetAllMarkerStyles(); 
                   selectMarker(pin.id);
-                  map.flyTo([pin.data.lat, pin.data.lng], 3.5, { duration: 1.5 }); // 70% 줌 레벨
+                  map.flyTo([pin.data.lat, pin.data.lng], 3.5, { duration: 1.5 }); 
               }
           };
           const deleteBtnLi = childLi.querySelector('.delete-pin-btn');
@@ -221,7 +215,6 @@ function refreshList() {
           childrenUl.appendChild(childLi);
       });
       
-      // 그룹 헤더 클릭: 목록 토글 + 줌 아웃 + 깜빡임
       header.onclick = () => {
           childrenUl.classList.toggle('hidden');
           
@@ -231,13 +224,13 @@ function refreshList() {
           
           if (markersInGroup.length > 0) {
               resetAllMarkerStyles(); 
-              selectMarker(null); // 기존 개별 핀 선택 해제
+              selectMarker(null); 
               
               if (initialBounds) {
-                   map.fitBounds(initialBounds, { animate: true }); // 항상 전체 맵 뷰
+                   map.fitBounds(initialBounds, { animate: true }); 
               }
               
-              highlightMarkers(markersInGroup); // 나머지 흐리게 + 선택 핀 깜빡이게
+              highlightMarkers(markersInGroup); 
           }
       };
       
@@ -513,10 +506,18 @@ input:checked + .slider { background-color: #2563eb; }
 input:checked + .slider:before { transform: translateX(16px); }
 .edit-label { font-size: 14px; color: #666; margin-right: 8px; }
 
-.panel-content { padding: 15px; flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 20px; }
+/* [수정] panel-content가 스크롤되도록 */
+.panel-content { 
+    padding: 15px; 
+    flex: 1; /* panel-header를 제외한 나머지 공간을 채움 */
+    overflow-y: auto; /* panel-content가 스크롤되도록 */
+    display: flex; 
+    flex-direction: column; 
+    gap: 20px; 
+}
 .section.pin-list-area {
-    flex: 1;
-    display: flex; /* [수정] flex-direction column */
+    /* flex: 1; 제거 */
+    display: flex;
     flex-direction: column;
     min-height: 100px;
 }
@@ -559,9 +560,9 @@ input:checked + .slider:before { transform: translateX(16px); }
     background: #fff; 
     border: 1px solid #eee; 
     border-radius: 4px; 
-    flex: 1; /* [수정] 목록이 남은 공간 차지 */
-    overflow-y: auto; /* [수정] 목록 스크롤 */
-    max-height: none; /* [수정] 모바일 수정을 위해 max-height 제거 */
+    /* flex: 1; 제거 */
+    overflow-y: auto; 
+    max-height: 250px; /* [수정] PC에서 목록 최대 높이 */
 }
 .pin-group-header {
   display: flex; justify-content: space-between; align-items: center;
@@ -593,7 +594,7 @@ button:hover { background: #e5e7eb; }
 
 .marker-root { 
     position: relative; width: 22px; height: 22px; 
-    transition: opacity 0.3s ease-in-out; /* [신규] 흐림 효과 트랜지션 */
+    transition: opacity 0.3s ease-in-out; 
 }
 .marker-dot {
   position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
@@ -609,26 +610,23 @@ button:hover { background: #e5e7eb; }
 .marker-selected .marker-dot { background: #ef4444; transform: translate(-50%, -50%) scale(1.2); }
 .marker-selected { z-index: 999 !important; }
 
-/* [신규] 마커 깜빡임 애니메이션 (무한 반복) */
 @keyframes marker-blink-animation {
   0%, 100% { opacity: 1; transform: translate(-50%, -50%) scale(1.1); }
   50% { opacity: 0.3; transform: translate(-50%, -50%) scale(0.9); }
 }
 .marker-blink .marker-dot {
-  animation: marker-blink-animation 0.5s infinite; /* [수정] 무한 반복 */
-  background-color: #ef4444 !important; /* 깜빡일 때 빨간색 */
+  animation: marker-blink-animation 0.5s infinite; 
+  background-color: #ef4444 !important; 
 }
 
-/* [신규] 마커 흐리게 */
 .marker-faded {
     opacity: 0.3;
     z-index: 1 !important;
 }
 .marker-faded:hover {
-    opacity: 0.8; /* 흐려진 핀에 마우스 올려도 살짝 보임 */
+    opacity: 0.8; 
 }
 
-/* [신규] 전체 지도 보기 버튼 */
 .reset-view-btn {
   background-color: #fff;
   border: 2px solid rgba(0,0,0,0.2);
@@ -636,7 +634,7 @@ button:hover { background: #e5e7eb; }
   border-radius: 4px;
   width: 30px; height: 30px; line-height: 30px;
   text-align: center; cursor: pointer; font-size: 18px;
-  margin-top: 5px !important; /* 줌 컨트롤과의 간격 */
+  margin-top: 5px !important; 
 }
 .reset-view-btn:hover { background-color: #f4f4f4; }
 .leaflet-top.leaflet-right { top: 10px; }
@@ -654,14 +652,14 @@ button:hover { background: #e5e7eb; }
   .panel-content { padding: 10px; gap: 15px; }
   #app.edit-mode .actions { opacity: 1; }
   
-  /* [수정] 모바일에서 핀 목록이 스크롤되도록 */
   .section.pin-list-area {
-      flex-basis: 150px; /* 최소 150px 높이 확보 */
-      flex-grow: 1;
+      /* flex-basis: 150px; 제거 */
+      /* flex-grow: 1; 제거 */
   }
   #pinItems {
       max-height: 150px; /* [수정] 모바일에서 목록 높이 제한 */
-      flex: none; /* flex: 1 제거 */
+      /* flex: none; 제거 */
+      overflow-y: auto;
   }
 }
 </style>
