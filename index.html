@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8" />
-<title>노션 임베드용 핀 지도 (스크롤 최종 수정)</title>
+<title>노션 임베드용 핀 지도 (모바일 스크롤 수정)</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <!-- Leaflet -->
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -474,8 +474,16 @@ document.addEventListener('DOMContentLoaded', async () => {
 </script>
 <style>
 /* --- 기본 레이아웃 --- */
-html, body, #app { height: 100%; margin: 0; font-family: sans-serif; overflow: hidden; }
-#app { display: flex; flex-direction: row; }
+/* [수정] 스크롤을 위해 html, body 높이 제한 제거 */
+html, body { 
+    margin: 0; 
+    font-family: sans-serif; 
+}
+#app { 
+    display: flex; 
+    flex-direction: row; 
+    height: 100vh; /* [수정] PC에서는 화면 높이 100% */
+}
 #map { flex: 1; background: #fff; }
 
 #resizer { width: 5px; background: #ddd; cursor: col-resize; z-index: 10; transition: background 0.2s; }
@@ -507,7 +515,6 @@ input:checked + .slider { background-color: #2563eb; }
 input:checked + .slider:before { transform: translateX(16px); }
 .edit-label { font-size: 14px; color: #666; margin-right: 8px; }
 
-/* [수정] panel-content가 스크롤되도록 */
 .panel-content { 
     padding: 15px; 
     flex: 1;
@@ -518,7 +525,6 @@ input:checked + .slider:before { transform: translateX(16px); }
     min-height: 0; 
 }
 .section.pin-list-area {
-    /* [수정] PC에서 핀 목록 섹션이 남은 공간을 차지 */
     flex: 1; 
     display: flex;
     flex-direction: column;
@@ -568,8 +574,8 @@ input:checked + .slider:before { transform: translateX(16px); }
     background: #fff; 
     border: 1px solid #eee; 
     border-radius: 4px; 
-    flex: 1; /* [수정] 목록이 남은 공간 차지 */
-    overflow-y: auto; /* [수정] 목록 스크롤 */
+    flex: 1; 
+    overflow-y: auto; 
     min-height: 0; 
 }
 .pin-group-header {
@@ -649,32 +655,39 @@ button:hover { background: #e5e7eb; }
 
 
 @media (max-width: 768px) {
-  #app { flex-direction: column; }
-  #map { flex: 1; order: 1; }
+  #app { 
+      flex-direction: column; 
+      height: auto; /* [수정] 고정 높이 제거 */
+      min-height: 100vh; /* [수정] 최소 화면 높이 */
+  }
+  #map { 
+      flex: 1; 
+      order: 1;
+      height: 50vh; /* [수정] 지도 높이 50% 고정 */
+      min-height: 300px; /* [수정] 지도 최소 높이 */
+  }
   #resizer { display: none; }
   #panel {
-      width: 100%; height: auto; max-height: 50vh; /* [수정] 모바일 패널 최대 높이 */
+      width: 100%; 
+      height: auto; /* [수정] 내용만큼 높이 */
+      max-height: none; /* [수정] 높이 제한 제거 */
       border-right: none; border-top: 1px solid #ddd;
       min-width: auto; max-width: none; order: 2;
   }
   .panel-content { 
       padding: 10px; 
       gap: 15px; 
-      /* [수정] 모바일에서도 panel-content가 스크롤되도록 보장 */
-      flex: 1;
-      overflow-y: auto;
-      min-height: 0; 
+      flex: none; /* [수정] flex 제거 */
+      overflow-y: visible; /* [수정] 패널 내부 스크롤 제거 (페이지 스크롤 사용) */
   }
   #app.edit-mode .actions { opacity: 1; }
   
   .section.pin-list-area {
-      /* [수정] 핀 목록 섹션이 내용만큼 높이를 갖도록 */
-      flex: none; 
+      flex: none; /* [수정] flex 제거 */
   }
   #pinItems {
-      /* [수정] 모바일에서 핀 목록의 스크롤바는 없애고, 패널 전체가 스크롤되도록 */
-      flex: none;
-      overflow-y: visible;
+      flex: none; /* [수정] flex 제거 */
+      overflow-y: visible; /* [수정] 스크롤 제거 */
       max-height: none; 
   }
 }
